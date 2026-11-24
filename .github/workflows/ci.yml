@@ -1,0 +1,87 @@
+name: Verify SchoolBus Pro
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: schoolbus
+          POSTGRES_PASSWORD: schoolbus
+          POSTGRES_DB: schoolbus
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U schoolbus" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://schoolbus:schoolbus@127.0.0.1:5432/schoolbus
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SECRET_KEY: ci-only-disposable-secret-key-not-for-deployment-0123456789
+      DEBUG: "True"
+      DEMO_MODE: "True"
+      CELERY_TASK_ALWAYS_EAGER: "True"
+      CSRF_TRUSTED_ORIGINS: http://localhost:5173,http://localhost:4173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install -r backend/requirements-dev.txt
+      - run: npm ci
+        working-directory: frontend
+      - name: Backend checks
+        working-directory: backend
+        run: |
+          ruff check .
+          python manage.py migrate --noinput
+          python manage.py collectstatic --noinput
+          python manage.py makemigrations --check --dry-run
+          python manage.py check
+          python manage.py spectacular --file /tmp/openapi.yaml --validate
+          pytest
+          python manage.py seed_demo_data
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Start disposable browser-test servers
+        run: |
+          (cd backend && DJANGO_SETTINGS_MODULE=config.settings.e2e python manage.py runserver 8001 --noreload > /tmp/backend.log 2>&1) &
+          (cd frontend && npm run preview > /tmp/frontend.log 2>&1) &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8001/api/health/ && curl -fsS http://localhost:4173/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Real browser workflows and production PWA
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:4173
+          E2E_PRODUCTION: "1"
+        run: npm run test:e2e -- --workers=1
+      - name: Complete 17-step API demonstration
+        run: python scripts/demo_workflow.py --base http://localhost:8001
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-results
+          path: |
+            frontend/playwright-report
+            frontend/test-results

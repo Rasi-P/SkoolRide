@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoice {{ invoice.invoice_number }}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; }
+  .sheet { max-width: 720px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; }
+  .head { display: flex; justify-content: space-between; border-bottom: 2px solid #1e3a8a; padding-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; color: #1e3a8a; } .muted { color: #64748b; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; } th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+  th { color: #475569; font-size: 12px; text-transform: uppercase; } .r { text-align: right; } .total td { font-weight: 700; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; font-size: 13px; }
+  .grid div span { display:block; color:#64748b; font-size: 11px; text-transform: uppercase; }
+  .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background:#e0e7ff; color:#3730a3 }
+  @media print { body { padding: 0; } .sheet { border: none; } .noprint { display: none; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="head">
+    <div><h1>{{ school.name }}</h1><div class="muted">Transport fee invoice · {{ school.full_address }}</div></div>
+    <div style="text-align:right"><strong>{{ invoice.invoice_number }}</strong><div class="muted">Issued {{ invoice.issue_date|date:"d M Y" }} · Due {{ invoice.due_date|date:"d M Y" }}</div><span class="badge">{{ invoice.get_status_display }}</span></div>
+  </div>
+  <div class="grid">
+    <div><span>Student</span>{{ invoice.student.full_name }} ({{ invoice.student.admission_number }}) · Class {{ invoice.student.class_label }}</div>
+    <div><span>Billed to</span>{{ invoice.billed_to.full_name|default:"Parent / Guardian" }}</div>
+    <div><span>Period</span>{{ invoice.period_label }} ({{ invoice.period_start|date:"d M" }} – {{ invoice.period_end|date:"d M Y" }})</div>
+    <div><span>Fee plan</span>{{ invoice.fee_plan.name|default:"-" }}</div>
+  </div>
+  <table>
+    <thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit</th><th class="r">Amount</th></tr></thead>
+    <tbody>
+    {% for li in invoice.line_items.all %}<tr><td>{{ li.description }}</td><td class="r">{{ li.quantity }}</td><td class="r">{{ li.unit_amount }}</td><td class="r">{{ invoice.currency }} {{ li.amount }}</td></tr>{% endfor %}
+      <tr><td colspan="3" class="r">Subtotal</td><td class="r">{{ invoice.currency }} {{ invoice.subtotal }}</td></tr>
+      {% if invoice.discount %}<tr><td colspan="3" class="r">Discount</td><td class="r">- {{ invoice.currency }} {{ invoice.discount }}</td></tr>{% endif %}
+      {% if invoice.late_fee %}<tr><td colspan="3" class="r">Late fee</td><td class="r">{{ invoice.currency }} {{ invoice.late_fee }}</td></tr>{% endif %}
+      <tr class="total"><td colspan="3" class="r">Total</td><td class="r">{{ invoice.currency }} {{ invoice.total }}</td></tr>
+      <tr><td colspan="3" class="r">Paid</td><td class="r">{{ invoice.currency }} {{ invoice.amount_paid }}</td></tr>
+      <tr class="total"><td colspan="3" class="r">Balance due</td><td class="r">{{ invoice.currency }} {{ invoice.balance }}</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:24px">Pay via the parent app, or at the school transport office ({{ school.transport_office_phone|default:school.phone }}).</p>
+  <button class="noprint" onclick="window.print()" style="margin-top:12px;padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;cursor:pointer">Print</button>
+</div>
+</body>
+</html>

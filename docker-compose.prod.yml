@@ -1,0 +1,67 @@
+# Production-style stack: gunicorn/daphne behind nginx serving the built PWA. Put TLS termination
+# (Caddy/Traefik/ALB) in front of the `web` service: the PWA, geolocation and push all require HTTPS.
+# Usage: docker compose -f docker-compose.prod.yml --env-file backend/.env.prod up --build -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-schoolbus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-schoolbus}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env.prod
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    volumes: [media:/app/media, static:/app/staticfiles]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    command: sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+
+  worker:
+    build: ./backend
+    env_file: ./backend/.env.prod
+    environment: { DJANGO_SETTINGS_MODULE: config.settings.production }
+    depends_on: [backend]
+    restart: unless-stopped
+    command: celery -A config worker -l info --concurrency=4
+
+  beat:
+    build: ./backend
+    env_file: ./backend/.env.prod
+    environment: { DJANGO_SETTINGS_MODULE: config.settings.production }
+    depends_on: [backend]
+    restart: unless-stopped
+    command: celery -A config beat -l info
+
+  web:
+    build:
+      context: ./frontend
+      args: { VITE_API_BASE_URL: /api }
+    ports: ["127.0.0.1:${WEB_PORT:-8080}:80"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:
+  static:
